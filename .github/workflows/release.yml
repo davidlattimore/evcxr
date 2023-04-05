@@ -19,12 +19,15 @@ jobs:
         - build: linux
           os: ubuntu-latest
           target: x86_64-unknown-linux-gnu
+          rustc_flags: -Ctarget-feature=+crt-static
         - build: macos
           os: macos-latest
           target: x86_64-apple-darwin
+          rustc_flags:
         - build: windows
           os: windows-2019
           target: x86_64-pc-windows-msvc
+          rustc_flags:
 
     steps:
     - name: Checkout code
@@ -40,11 +43,17 @@ jobs:
       run: |
         awk "/# Version ${GITHUB_REF_NAME#v}/{flag=1; next} /^$/{flag=0} flag" RELEASE_NOTES.md >REL.md
 
-    - name: Build release binary
+    - name: Build release repl
       uses: actions-rs/cargo@v1
       with:
-        command: build
-        args: --release --target ${{ matrix.target }}
+        command: rustc
+        args: --release -p evcxr_repl --bin evcxr --target ${{ matrix.target }} -- ${{ matrix.rustc_flags }}
+
+    - name: Build release jupyter kernel
+      uses: actions-rs/cargo@v1
+      with:
+        command: rustc
+        args: --release -p evcxr_jupyter --target ${{ matrix.target }} -- ${{ matrix.rustc_flags }}
 
     - name: Create tarballs (Unix)
       if: matrix.build == 'linux' || matrix.build == 'macos'
