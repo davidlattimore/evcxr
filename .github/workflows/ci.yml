@@ -11,17 +11,17 @@ env:
   CARGO_INCREMENTAL: 0
 
 jobs:
-  ci-linux:
-    name: Build and test (Linux)
-    runs-on: ubuntu-latest
+  ci-windows:
+    # Avoid running on people's forks, especially the scheduled runs.
+    if: github.repository == 'evcxr/evcxr'
+    runs-on: windows-2022
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: dtolnay/rust-toolchain@stable
-        id: rust-toolchain
-        with:
-          components: rust-src
+
       - uses: actions/cache@v4
-        # https://github.com/actions/cache/blob/main/examples.md#rust---cargo
         with:
           path: |
             ~/.cargo/bin/
@@ -30,50 +30,60 @@ jobs:
             ~/.cargo/git/db/
             target/
           key: ${{ runner.os }}-cargo-${{ steps.rust-toolchain.outputs.cachekey }}-${{ hashFiles('**/Cargo.lock') }}
+
       - run: cargo build
       - run: cargo test
 
-  rustfmt:
-    name: Check formatting
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-    - uses: dtolnay/rust-toolchain@stable
-      with:
-        components: rustfmt
-    - run: cargo fmt --all -- --check
+  release:
+    name: Release
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write # Needed for creating releases
 
-  clippy:
-    name: Clippy
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-    - uses: dtolnay/rust-toolchain@stable
-      with:
-        components: clippy
-    - run: cargo clippy --target x86_64-unknown-linux-gnu
-
-  ci-mac:
-    runs-on: macos-latest
     strategy:
       matrix:
-        rust:
-          - stable
+        include:
+        - build: windows
+          os: windows-2022
+          target: x86_64-pc-windows-msvc
 
     steps:
-      - uses: actions/checkout@v4
+    - name: Checkout code
+      uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-${{ steps.rust-toolchain.outputs.cachekey }}-${{ hashFiles('**/Cargo.lock') }}
+    - uses: dtolnay/rust-toolchain@stable
 
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build
-      - run: cargo test
+    - name: Extract release notes
+      shell: bash
+      run: |
+        awk "/# Version ${GITHUB_REF_NAME#v}/{flag=1; next} /^$/{flag=0} flag" RELEASE_NOTES.md >REL.md
+
+    - name: Build release binary
+      run: cargo build --release --target ${{ matrix.target }}
+
+    - name: Create tarballs (Unix)
+      if: matrix.build == 'linux' || matrix.build == 'macos'
+      run: |
+        n="evcxr-${{ github.ref_name }}-${{ matrix.target }}"
+        mkdir "$n"
+        cp "target/${{ matrix.target }}/release/evcxr" "$n"
+        strip "$n/evcxr"
+        tar zcf $n.tar.gz $n
+        n="evcxr_jupyter-${{ github.ref_name }}-${{ matrix.target }}"
+        mkdir "$n"
+        cp "target/${{ matrix.target }}/release/evcxr_jupyter" "$n"
+        strip "$n/evcxr_jupyter"
+        tar zcf $n.tar.gz $n
+
+    - name: Zip binaries (Window)
+      if: matrix.build == 'windows'
+      shell: bash
+      run: |
+        n="evcxr-${{ github.ref_name }}-${{ matrix.target }}"
+        mkdir "$n"
+        cp "target/${{ matrix.target }}/release/evcxr.exe" "$n"
+        7z a $n.zip $n
+        n="evcxr_jupyter-${{ github.ref_name }}-${{ matrix.target }}"
+        mkdir "$n"
+        cp "target/${{ matrix.target }}/release/evcxr_jupyter.exe" "$n"
+        7z a $n.zip $n
